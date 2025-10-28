@@ -58,6 +58,138 @@ languages:
           type: "method-analysis"
           conditions:
             - "method-length-exceeded"
+      
+      - id: "java-exception-handling"
+        name: "예외 처리 누락"
+        severity: "high"
+        category: "reliability"
+        description: "적절한 예외 처리가 누락된 경우"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "uncaught-exception"
+            - "empty-catch-block"
+      
+      - id: "java-input-validation"
+        name: "입력값 검증 누락"
+        severity: "high"
+        category: "security"
+        description: "사용자 입력값에 대한 검증이 누락된 경우"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "unvalidated-input"
+            - "sql-injection-risk"
+      
+      - id: "java-cyclomatic-complexity"
+        name: "순환 복잡도 초과"
+        severity: "medium"
+        category: "maintainability"
+        description: "메소드의 순환 복잡도가 10을 초과하는 경우"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "high-cyclomatic-complexity"
+      
+      - id: "java-duplicate-code"
+        name: "중복 코드"
+        severity: "medium"
+        category: "maintainability"
+        description: "동일하거나 유사한 코드 블록이 중복되는 경우"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "duplicate-method"
+            - "duplicate-block"
+      
+      - id: "java-coding-conventions"
+        name: "코딩 컨벤션 위반"
+        severity: "medium"
+        category: "style"
+        description: "Java 코딩 컨벤션을 위반하는 경우"
+        enabled: true
+        pattern:
+          type: "regex"
+          regex: "^[a-z].*|.*_.*"
+      
+      # Spring Framework 전용 규칙들
+      - id: "spring-validation-missing"
+        name: "@Valid 어노테이션 누락"
+        severity: "critical"
+        category: "security"
+        description: "Controller 메소드의 @RequestBody에 @Valid 어노테이션 누락"
+        enabled: true
+        pattern:
+          type: "regex"
+          regex: "@RequestBody\\s+(?!@Valid)"
+      
+      - id: "spring-transactional-private"
+        name: "private 메소드 @Transactional 사용"
+        severity: "high"
+        category: "reliability"
+        description: "private 메소드는 프록시가 작동하지 않아 트랜잭션 무효"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "private-transactional-method"
+      
+      - id: "spring-transactional-rollback"
+        name: "@Transactional rollbackFor 누락"
+        severity: "medium"
+        category: "reliability"
+        description: "체크드 예외에 대한 rollbackFor 설정 누락"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "transactional-without-rollback"
+      
+      - id: "spring-security-missing"
+        name: "보안 어노테이션 누락"
+        severity: "high"
+        category: "security"
+        description: "민감한 메소드에 @PreAuthorize 또는 @Secured 어노테이션 누락"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "sensitive-method-no-security"
+      
+      - id: "spring-secured-deprecated"
+        name: "@Secured 대신 @PreAuthorize 권장"
+        severity: "medium"
+        category: "best-practices"
+        description: "@Secured는 레거시, @PreAuthorize가 더 유연함"
+        enabled: true
+        pattern:
+          type: "regex"
+          regex: "@Secured"
+      
+      - id: "spring-field-injection"
+        name: "필드 주입 대신 생성자 주입 권장"
+        severity: "medium"
+        category: "best-practices"
+        description: "@Autowired 필드 주입 대신 생성자 주입 사용"
+        enabled: true
+        pattern:
+          type: "regex"
+          regex: "@Autowired\\s+private"
+      
+      - id: "spring-controller-advice-missing"
+        name: "전역 예외 처리기 누락"
+        severity: "high"
+        category: "reliability"
+        description: "@ControllerAdvice 또는 @RestControllerAdvice 미사용"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "controller-without-global-exception-handler"
 
   - language: javascript
     rules:
@@ -102,6 +234,70 @@ languages:
         pattern:
           type: "regex"
           regex: "\\bvar\\s+\\w+"
+      
+      - id: "js-function-length"
+        name: "함수 길이 초과"
+        severity: "medium"
+        category: "maintainability"
+        description: "50라인을 초과하는 긴 함수"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "function-length-exceeded"
+      
+      - id: "js-strict-mode"
+        name: "Strict Mode 미사용"
+        severity: "medium"
+        category: "best-practices"
+        description: "'use strict' 선언이 누락된 경우"
+        enabled: true
+        pattern:
+          type: "regex"
+          regex: "^(?!.*use strict).*function"
+      
+      - id: "js-global-variables"
+        name: "전역 변수 사용"
+        severity: "medium"
+        category: "best-practices"
+        description: "전역 스코프에 변수 선언"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "global-variable-declaration"
+      
+      - id: "js-callback-hell"
+        name: "콜백 지옥"
+        severity: "high"
+        category: "maintainability"
+        description: "깊게 중첩된 콜백 함수"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "deeply-nested-callbacks"
+      
+      - id: "js-unused-variables"
+        name: "사용하지 않는 변수"
+        severity: "low"
+        category: "cleanup"
+        description: "선언되었지만 사용되지 않는 변수"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "unused-variable"
+      
+      - id: "js-equality-operators"
+        name: "동등 연산자 사용"
+        severity: "medium"
+        category: "best-practices"
+        description: "== 대신 === 사용 권장"
+        enabled: true
+        pattern:
+          type: "regex"
+          regex: "[^!=]==(?!=)|[^!=]!=(?!=)"
 
   - language: html
     rules:
@@ -139,6 +335,59 @@ languages:
             - "missing-title"
             - "missing-meta-description"
             - "h1-issues"
+      
+      - id: "html-semantic-markup"
+        name: "시맨틱 마크업 미사용"
+        severity: "medium"
+        category: "accessibility"
+        description: "div, span 대신 의미있는 HTML5 태그 사용 권장"
+        enabled: true
+        pattern:
+          type: "regex"
+          regex: "<div[^>]*class=['\"](?:header|footer|nav|main|article|section)['\"]"
+      
+      - id: "html-validation"
+        name: "HTML 유효성 검사"
+        severity: "high"
+        category: "standards"
+        description: "닫히지 않은 태그나 잘못된 HTML 구조"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "unclosed-tags"
+            - "invalid-nesting"
+      
+      - id: "html-deprecated-tags"
+        name: "폐기된 태그 사용"
+        severity: "high"
+        category: "standards"
+        description: "HTML5에서 폐기된 태그 사용"
+        enabled: true
+        pattern:
+          type: "regex"
+          regex: "<(font|center|marquee|blink)\\b"
+      
+      - id: "html-inline-styles"
+        name: "인라인 스타일 사용"
+        severity: "medium"
+        category: "maintainability"
+        description: "style 속성 대신 CSS 파일 사용 권장"
+        enabled: true
+        pattern:
+          type: "regex"
+          regex: "\\sstyle\\s*="
+      
+      - id: "html-form-labels"
+        name: "폼 레이블 누락"
+        severity: "high"
+        category: "accessibility"
+        description: "input 요소에 대응하는 label이 없음"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "input-without-label"
 
   - language: css
     rules:
@@ -166,3 +415,55 @@ languages:
           conditions:
             - "fixed-width-no-media-query"
             - "excessive-px-units"
+      
+      - id: "css-vendor-prefixes"
+        name: "벤더 프리픽스 누락"
+        severity: "medium"
+        category: "compatibility"
+        description: "CSS3 속성에 대한 벤더 프리픽스 누락"
+        enabled: true
+        pattern:
+          type: "regex"
+          regex: "(?:transform|transition|animation):\\s*[^;]+;(?![^}]*-webkit-)"
+      
+      - id: "css-unused-styles"
+        name: "사용하지 않는 CSS"
+        severity: "low"
+        category: "cleanup"
+        description: "HTML에서 사용되지 않는 CSS 규칙"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "unused-css-rule"
+      
+      - id: "css-important-overuse"
+        name: "!important 남용"
+        severity: "medium"
+        category: "maintainability"
+        description: "!important의 과도한 사용"
+        enabled: true
+        pattern:
+          type: "regex"
+          regex: "!important"
+      
+      - id: "css-font-fallbacks"
+        name: "폰트 폴백 누락"
+        severity: "medium"
+        category: "compatibility"
+        description: "font-family에 폴백 폰트 미지정"
+        enabled: true
+        pattern:
+          type: "regex"
+          regex: "font-family:\\s*['\"][^'\"]+['\"]\\s*;"
+      
+      - id: "css-color-contrast"
+        name: "색상 대비 부족"
+        severity: "high"
+        category: "accessibility"
+        description: "텍스트와 배경색의 대비가 접근성 기준 미달"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "insufficient-color-contrast"

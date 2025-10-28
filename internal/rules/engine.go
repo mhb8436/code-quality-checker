@@ -95,6 +95,21 @@ func (e *Engine) registerJavaRules() {
 			rules = append(rules, NewDuplicateCodeRule(ruleConfig))
 		case "java-coding-conventions":
 			rules = append(rules, NewCodingConventionRule(ruleConfig))
+		// Spring Framework 규칙들
+		case "spring-validation-missing":
+			rules = append(rules, NewSpringValidationRule(ruleConfig))
+		case "spring-transactional-private":
+			rules = append(rules, NewSpringTransactionalRule(ruleConfig))
+		case "spring-transactional-rollback":
+			rules = append(rules, NewSpringTransactionalRule(ruleConfig))
+		case "spring-security-missing":
+			rules = append(rules, NewSpringSecurityRule(ruleConfig))
+		case "spring-secured-deprecated":
+			rules = append(rules, NewSpringSecurityRule(ruleConfig))
+		case "spring-field-injection":
+			rules = append(rules, NewSpringDependencyInjectionRule(ruleConfig))
+		case "spring-controller-advice-missing":
+			rules = append(rules, NewSpringExceptionHandlingRule(ruleConfig))
 		}
 	}
 
