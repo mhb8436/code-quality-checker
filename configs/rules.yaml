@@ -1,0 +1,168 @@
+version: "1.0"
+
+languages:
+  - language: java
+    rules:
+      - id: "java-transactional-missing"
+        name: "@Transactional 어노테이션 누락"
+        severity: "high"
+        category: "transaction"
+        description: "Service 클래스의 데이터 변경 메소드에 @Transactional 어노테이션이 누락된 경우"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "service-class"
+            - "data-change-method"
+            - "no-transactional"
+      
+      - id: "java-system-out"
+        name: "System.out.println 사용"
+        severity: "medium"
+        category: "logging"
+        description: "프로덕션 코드에서 System.out.println 사용"
+        enabled: true
+        pattern:
+          type: "regex"
+          regex: "System\\.out\\.(print|println)"
+      
+      - id: "java-layer-architecture"
+        name: "레이어 아키텍처 위반"
+        severity: "high"
+        category: "architecture"
+        description: "Controller에서 DAO 직접 접근 등 레이어 아키텍처 위반"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "controller-class"
+            - "dao-dependency"
+      
+      - id: "java-magic-number"
+        name: "매직 넘버 사용"
+        severity: "medium"
+        category: "maintainability"
+        description: "하드코딩된 숫자 상수 사용"
+        enabled: true
+        pattern:
+          type: "regex"
+          regex: "\\b((?:[1-9]\\d{2,})|(?:\\d+\\.\\d+))\\b"
+      
+      - id: "java-method-length"
+        name: "메소드 길이 초과"
+        severity: "medium"
+        category: "maintainability"
+        description: "50라인을 초과하는 긴 메소드"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "method-length-exceeded"
+
+  - language: javascript
+    rules:
+      - id: "js-innerHTML-xss"
+        name: "innerHTML XSS 취약점"
+        severity: "critical"
+        category: "security"
+        description: "innerHTML 사용으로 인한 XSS 공격 위험"
+        enabled: true
+        pattern:
+          type: "regex"
+          regex: "\\.innerHTML\\s*=\\s*[^;]+"
+      
+      - id: "js-memory-leak"
+        name: "메모리 누수 위험"
+        severity: "high"
+        category: "performance"
+        description: "이벤트 리스너나 타이머가 정리되지 않음"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "event-listener-imbalance"
+            - "timer-not-cleared"
+      
+      - id: "js-console-log"
+        name: "console.log 사용"
+        severity: "low"
+        category: "logging"
+        description: "프로덕션 코드에서 console.log 사용"
+        enabled: true
+        pattern:
+          type: "regex"
+          regex: "console\\.(log|warn|error|info|debug)"
+      
+      - id: "js-var-usage"
+        name: "var 키워드 사용"
+        severity: "medium"
+        category: "best-practices"
+        description: "let/const 대신 var 키워드 사용"
+        enabled: true
+        pattern:
+          type: "regex"
+          regex: "\\bvar\\s+\\w+"
+
+  - language: html
+    rules:
+      - id: "html-img-alt"
+        name: "img 태그 alt 속성 누락"
+        severity: "high"
+        category: "accessibility"
+        description: "접근성을 위한 대체 텍스트 필요"
+        enabled: true
+        pattern:
+          type: "regex"
+          regex: "<img(?![^>]*alt)[^>]*>"
+      
+      - id: "html-accessibility"
+        name: "웹 접근성 위반"
+        severity: "high"
+        category: "accessibility"
+        description: "ARIA 속성, 키보드 접근성 등 위반"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "clickable-div"
+            - "button-without-label"
+      
+      - id: "html-seo"
+        name: "SEO 최적화 누락"
+        severity: "medium"
+        category: "seo"
+        description: "title, meta description, h1 태그 등 SEO 요소 누락"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "missing-title"
+            - "missing-meta-description"
+            - "h1-issues"
+
+  - language: css
+    rules:
+      - id: "css-selectors"
+        name: "CSS 셀렉터 효율성"
+        severity: "medium"
+        category: "performance"
+        description: "비효율적인 CSS 셀렉터 사용"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "overly-nested"
+            - "universal-selector"
+            - "inefficient-descendant"
+      
+      - id: "css-responsive-design"
+        name: "반응형 디자인 미적용"
+        severity: "medium"
+        category: "responsive"
+        description: "미디어 쿼리나 유연한 레이아웃 부족"
+        enabled: true
+        pattern:
+          type: "method-analysis"
+          conditions:
+            - "fixed-width-no-media-query"
+            - "excessive-px-units"
