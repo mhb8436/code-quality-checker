@@ -17,8 +17,8 @@
 # Go workspace file
 go.work
 
-# Build directory
-build/
+# Build directory (commented out to include release binaries)
+# build/
 dist/
 
 # IDE files
