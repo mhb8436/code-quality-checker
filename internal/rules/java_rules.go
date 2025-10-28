@@ -1,7 +1,9 @@
 package rules
 
 import (
+	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"code-quality-checker/internal/config"
@@ -369,26 +371,724 @@ func getColumnFromPosition(content string, pos int) int {
 }
 
 func intToString(i int) string {
-	return strings.Trim(strings.Join(strings.Fields(string(rune(i))), ""), "[]")
+	return strconv.Itoa(i)
 }
 
-// 나머지 규칙들을 위한 스텁
+// ExceptionHandlingRule 예외 처리 검사
+type ExceptionHandlingRule struct {
+	config config.RuleConfig
+}
+
 func NewExceptionHandlingRule(cfg config.RuleConfig) Rule {
-	return &SystemOutRule{config: cfg} // 임시로 SystemOutRule 재사용
+	return &ExceptionHandlingRule{config: cfg}
+}
+
+func (r *ExceptionHandlingRule) ID() string                 { return r.config.ID }
+func (r *ExceptionHandlingRule) Name() string               { return r.config.Name }
+func (r *ExceptionHandlingRule) Severity() config.Severity { return config.ParseSeverity(r.config.Severity) }
+func (r *ExceptionHandlingRule) Category() string          { return r.config.Category }
+func (r *ExceptionHandlingRule) Description() string       { return r.config.Description }
+
+func (r *ExceptionHandlingRule) Check(file *parser.ParsedFile) []types.Issue {
+	var issues []types.Issue
+
+	// printStackTrace 사용 검사
+	printStackTraceRegex := regexp.MustCompile(`\.printStackTrace\(\)`)
+	matches := printStackTraceRegex.FindAllStringIndex(file.Content, -1)
+
+	for _, match := range matches {
+		lineNum := getLineNumberFromPosition(file.Content, match[0])
+		issues = append(issues, types.Issue{
+			RuleID:      r.ID(),
+			File:        file.Path,
+			Line:        lineNum,
+			Column:      getColumnFromPosition(file.Content, match[0]),
+			Severity:    r.Severity(),
+			Category:    r.Category(),
+			Message:     "printStackTrace() 사용이 발견되었습니다",
+			Description: "예외 스택트레이스가 콘솔에 노출되어 보안 위험이 있습니다",
+			Suggestion:  "Logger를 사용하여 적절한 로깅을 하세요",
+			CodeSnippet: r.getCodeSnippet(file, lineNum),
+		})
+	}
+
+	// throw new Exception() without proper handling 검사
+	throwRegex := regexp.MustCompile(`throw\s+new\s+Exception\s*\([^)]*\)`)
+	throwMatches := throwRegex.FindAllStringIndex(file.Content, -1)
+
+	for _, match := range throwMatches {
+		lineNum := getLineNumberFromPosition(file.Content, match[0])
+		issues = append(issues, types.Issue{
+			RuleID:      r.ID(),
+			File:        file.Path,
+			Line:        lineNum,
+			Column:      getColumnFromPosition(file.Content, match[0]),
+			Severity:    r.Severity(),
+			Category:    r.Category(),
+			Message:     "일반적인 Exception 타입을 사용하고 있습니다",
+			Description: "구체적인 예외 타입을 사용하는 것이 좋습니다",
+			Suggestion:  "구체적인 예외 클래스(BusinessException 등)를 정의하여 사용하세요",
+			CodeSnippet: r.getCodeSnippet(file, lineNum),
+		})
+	}
+
+	// Controller에 @ControllerAdvice 없는 경우 검사
+	javaClass, ok := file.AST.(*parser.JavaClass)
+	if ok && r.isController(javaClass) && !r.hasGlobalExceptionHandler(file.Content) {
+		issues = append(issues, types.Issue{
+			RuleID:      r.ID(),
+			File:        file.Path,
+			Line:        1,
+			Column:      1,
+			Severity:    r.Severity(),
+			Category:    r.Category(),
+			Message:     "전역 예외 처리기(@ControllerAdvice)가 없습니다",
+			Description: "일관된 예외 처리를 위해 전역 예외 처리기가 필요합니다",
+			Suggestion:  "@ControllerAdvice 클래스를 생성하여 전역 예외 처리를 구현하세요",
+			CodeSnippet: "",
+		})
+	}
+
+	return issues
+}
+
+func (r *ExceptionHandlingRule) isController(class *parser.JavaClass) bool {
+	for _, annotation := range class.Annotations {
+		if strings.Contains(annotation, "@Controller") || strings.Contains(annotation, "@RestController") {
+			return true
+		}
+	}
+	return strings.Contains(strings.ToLower(class.Name), "controller")
+}
+
+func (r *ExceptionHandlingRule) hasGlobalExceptionHandler(content string) bool {
+	return strings.Contains(content, "@ControllerAdvice") || strings.Contains(content, "@RestControllerAdvice")
+}
+
+func (r *ExceptionHandlingRule) getCodeSnippet(file *parser.ParsedFile, line int) string {
+	if line <= 0 || line > len(file.Lines) {
+		return ""
+	}
+	return strings.TrimSpace(file.Lines[line-1])
+}
+
+// InputValidationRule 입력 검증 검사
+type InputValidationRule struct {
+	config config.RuleConfig
 }
 
 func NewInputValidationRule(cfg config.RuleConfig) Rule {
-	return &SystemOutRule{config: cfg} // 임시로 SystemOutRule 재사용
+	return &InputValidationRule{config: cfg}
+}
+
+func (r *InputValidationRule) ID() string                 { return r.config.ID }
+func (r *InputValidationRule) Name() string               { return r.config.Name }
+func (r *InputValidationRule) Severity() config.Severity { return config.ParseSeverity(r.config.Severity) }
+func (r *InputValidationRule) Category() string          { return r.config.Category }
+func (r *InputValidationRule) Description() string       { return r.config.Description }
+
+func (r *InputValidationRule) Check(file *parser.ParsedFile) []types.Issue {
+	var issues []types.Issue
+
+	javaClass, ok := file.AST.(*parser.JavaClass)
+	if !ok {
+		return issues
+	}
+
+	// Controller 클래스인지 확인
+	if !r.isController(javaClass) {
+		return issues
+	}
+
+	// BenefitValidation 커스텀 검증 로직 사용 검사
+	benefitValidationRegex := regexp.MustCompile(`BenefitValidation\.(isEmpty|isNull|isValid)`)
+	matches := benefitValidationRegex.FindAllStringIndex(file.Content, -1)
+
+	for _, match := range matches {
+		lineNum := getLineNumberFromPosition(file.Content, match[0])
+		issues = append(issues, types.Issue{
+			RuleID:      r.ID(),
+			File:        file.Path,
+			Line:        lineNum,
+			Column:      getColumnFromPosition(file.Content, match[0]),
+			Severity:    r.Severity(),
+			Category:    r.Category(),
+			Message:     "커스텀 검증 로직 대신 Bean Validation 표준을 사용하세요",
+			Description: "표준 검증 미적용 시 SQL인젝션, XSS 등 보안 취약점 위험이 증가합니다",
+			Suggestion:  "@Valid, @NotNull, @Size 등 Bean Validation 어노테이션을 사용하세요",
+			CodeSnippet: r.getCodeSnippet(file, lineNum),
+		})
+	}
+
+	// @Valid 어노테이션 누락 검사
+	for _, method := range javaClass.Methods {
+		if r.isControllerMethod(method) && !r.hasValidAnnotation(method.Parameters, file.Content) {
+			// RequestBody가 있는지 확인
+			if r.hasRequestBodyParameter(method.Parameters, file.Content) {
+				issues = append(issues, types.Issue{
+					RuleID:      r.ID(),
+					File:        file.Path,
+					Line:        method.Line,
+					Column:      method.Column,
+					Severity:    r.Severity(),
+					Category:    r.Category(),
+					Message:     "@RequestBody 파라미터에 @Valid 어노테이션이 누락되었습니다",
+					Description: "입력 검증이 누락되어 잘못된 데이터가 처리될 수 있습니다",
+					Suggestion:  "@RequestBody @Valid 를 사용하여 자동 검증을 적용하세요",
+					CodeSnippet: r.getCodeSnippet(file, method.Line),
+				})
+			}
+		}
+	}
+
+	return issues
+}
+
+func (r *InputValidationRule) isController(class *parser.JavaClass) bool {
+	for _, annotation := range class.Annotations {
+		if strings.Contains(annotation, "@Controller") || strings.Contains(annotation, "@RestController") {
+			return true
+		}
+	}
+	return strings.Contains(strings.ToLower(class.Name), "controller")
+}
+
+func (r *InputValidationRule) isControllerMethod(method parser.JavaMethod) bool {
+	for _, annotation := range method.Annotations {
+		if strings.Contains(annotation, "@RequestMapping") ||
+			strings.Contains(annotation, "@GetMapping") ||
+			strings.Contains(annotation, "@PostMapping") ||
+			strings.Contains(annotation, "@PutMapping") ||
+			strings.Contains(annotation, "@DeleteMapping") {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *InputValidationRule) hasValidAnnotation(parameters []string, content string) bool {
+	for _, param := range parameters {
+		// 파라미터 주변에서 @Valid 찾기
+		paramIndex := strings.Index(content, param)
+		if paramIndex != -1 {
+			// 파라미터 앞 100자 정도에서 @Valid 찾기
+			startIndex := paramIndex - 100
+			if startIndex < 0 {
+				startIndex = 0
+			}
+			context := content[startIndex:paramIndex]
+			if strings.Contains(context, "@Valid") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (r *InputValidationRule) hasRequestBodyParameter(parameters []string, content string) bool {
+	for _, param := range parameters {
+		paramIndex := strings.Index(content, param)
+		if paramIndex != -1 {
+			startIndex := paramIndex - 100
+			if startIndex < 0 {
+				startIndex = 0
+			}
+			context := content[startIndex:paramIndex]
+			if strings.Contains(context, "@RequestBody") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (r *InputValidationRule) getCodeSnippet(file *parser.ParsedFile, line int) string {
+	if line <= 0 || line > len(file.Lines) {
+		return ""
+	}
+	return strings.TrimSpace(file.Lines[line-1])
+}
+
+// CyclomaticComplexityRule 순환 복잡도 검사
+type CyclomaticComplexityRule struct {
+	config config.RuleConfig
 }
 
 func NewCyclomaticComplexityRule(cfg config.RuleConfig) Rule {
-	return &SystemOutRule{config: cfg} // 임시로 SystemOutRule 재사용
+	return &CyclomaticComplexityRule{config: cfg}
+}
+
+func (r *CyclomaticComplexityRule) ID() string                 { return r.config.ID }
+func (r *CyclomaticComplexityRule) Name() string               { return r.config.Name }
+func (r *CyclomaticComplexityRule) Severity() config.Severity { return config.ParseSeverity(r.config.Severity) }
+func (r *CyclomaticComplexityRule) Category() string          { return r.config.Category }
+func (r *CyclomaticComplexityRule) Description() string       { return r.config.Description }
+
+func (r *CyclomaticComplexityRule) Check(file *parser.ParsedFile) []types.Issue {
+	var issues []types.Issue
+
+	javaClass, ok := file.AST.(*parser.JavaClass)
+	if !ok {
+		return issues
+	}
+
+	for _, method := range javaClass.Methods {
+		complexity := r.calculateComplexity(file, method)
+		
+		if complexity > 10 { // 순환 복잡도 임계값
+			issues = append(issues, types.Issue{
+				RuleID:      r.ID(),
+				File:        file.Path,
+				Line:        method.Line,
+				Column:      method.Column,
+				Severity:    r.Severity(),
+				Category:    r.Category(),
+				Message:     fmt.Sprintf("메소드 '%s'의 순환 복잡도가 너무 높습니다 (복잡도: %d)", method.Name, complexity),
+				Description: "높은 순환 복잡도는 코드 이해도와 테스트 어려움을 증가시킵니다",
+				Suggestion:  "메소드를 더 작은 단위로 분할하여 복잡도를 낮추세요",
+				CodeSnippet: r.getCodeSnippet(file, method.Line),
+			})
+		}
+	}
+
+	return issues
+}
+
+func (r *CyclomaticComplexityRule) calculateComplexity(file *parser.ParsedFile, method parser.JavaMethod) int {
+	// 메소드 본문 추출
+	methodBody := r.extractMethodBody(file, method)
+	if methodBody == "" {
+		return 1 // 기본 복잡도
+	}
+
+	complexity := 1 // 기본 경로 1개
+
+	// 분기문 패턴들
+	branchPatterns := []string{
+		`\bif\s*\(`,          // if 문
+		`\belse\s+if\s*\(`,   // else if 문  
+		`\belse\b`,           // else 문
+		`\bwhile\s*\(`,       // while 문
+		`\bfor\s*\(`,         // for 문
+		`\bdo\s*\{`,          // do-while 문
+		`\bswitch\s*\(`,      // switch 문
+		`\bcase\s+`,          // case 문
+		`\bcatch\s*\(`,       // catch 문
+		`\?\s*[^:]+\s*:`,     // 삼항연산자
+		`\&\&`,               // 논리 AND
+		`\|\|`,               // 논리 OR
+	}
+
+	for _, pattern := range branchPatterns {
+		regex := regexp.MustCompile(pattern)
+		matches := regex.FindAllString(methodBody, -1)
+		complexity += len(matches)
+	}
+
+	return complexity
+}
+
+func (r *CyclomaticComplexityRule) extractMethodBody(file *parser.ParsedFile, method parser.JavaMethod) string {
+	// 메소드 시작 위치 찾기
+	methodPattern := regexp.QuoteMeta(method.Name) + `\s*\([^)]*\)\s*\{`
+	methodRegex := regexp.MustCompile(methodPattern)
+	
+	match := methodRegex.FindStringIndex(file.Content)
+	if match == nil {
+		return ""
+	}
+
+	// 메소드 본문 추출 (중괄호 매칭)
+	start := match[1] - 1 // '{' 위치
+	braceCount := 1
+	i := start + 1
+
+	content := []rune(file.Content)
+	for i < len(content) && braceCount > 0 {
+		if content[i] == '{' {
+			braceCount++
+		} else if content[i] == '}' {
+			braceCount--
+		}
+		i++
+	}
+
+	if braceCount == 0 {
+		return string(content[start:i])
+	}
+
+	return ""
+}
+
+func (r *CyclomaticComplexityRule) getCodeSnippet(file *parser.ParsedFile, line int) string {
+	if line <= 0 || line > len(file.Lines) {
+		return ""
+	}
+	return strings.TrimSpace(file.Lines[line-1])
+}
+
+// DuplicateCodeRule 중복 코드 검사
+type DuplicateCodeRule struct {
+	config config.RuleConfig
 }
 
 func NewDuplicateCodeRule(cfg config.RuleConfig) Rule {
-	return &SystemOutRule{config: cfg} // 임시로 SystemOutRule 재사용
+	return &DuplicateCodeRule{config: cfg}
+}
+
+func (r *DuplicateCodeRule) ID() string                 { return r.config.ID }
+func (r *DuplicateCodeRule) Name() string               { return r.config.Name }
+func (r *DuplicateCodeRule) Severity() config.Severity { return config.ParseSeverity(r.config.Severity) }
+func (r *DuplicateCodeRule) Category() string          { return r.config.Category }
+func (r *DuplicateCodeRule) Description() string       { return r.config.Description }
+
+func (r *DuplicateCodeRule) Check(file *parser.ParsedFile) []types.Issue {
+	var issues []types.Issue
+
+	// 공통 패턴들 검사
+	duplicatePatterns := []struct {
+		pattern     string
+		description string
+		suggestion  string
+	}{
+		{
+			pattern:     `responseBody\.put\(.*?\);`,
+			description: "API 응답 생성 패턴이 중복되고 있습니다",
+			suggestion:  "공통 응답 클래스(ApiResponse)를 만들어 사용하세요",
+		},
+		{
+			pattern:     `cdService\.selectCdList\([^)]+\)`,
+			description: "코드 목록 조회가 반복되고 있습니다",
+			suggestion:  "캐싱을 적용하거나 공통 메소드로 추출하세요",
+		},
+		{
+			pattern:     `if\s*\([^)]*==\s*null[^)]*\)\s*\{[^}]*throw[^}]*\}`,
+			description: "null 체크 후 예외 발생 패턴이 중복됩니다",
+			suggestion:  "공통 검증 메소드를 만들어 사용하세요",
+		},
+		{
+			pattern:     `logger\.(info|debug|error)\([^)]*\);\s*return`,
+			description: "로깅 후 return 패턴이 반복됩니다",
+			suggestion:  "공통 로깅 유틸리티를 만들어 사용하세요",
+		},
+	}
+
+	for _, dp := range duplicatePatterns {
+		regex := regexp.MustCompile(dp.pattern)
+		matches := regex.FindAllStringIndex(file.Content, -1)
+
+		if len(matches) >= 3 { // 3번 이상 반복되면 중복으로 간주
+			for _, match := range matches {
+				lineNum := getLineNumberFromPosition(file.Content, match[0])
+				issues = append(issues, types.Issue{
+					RuleID:      r.ID(),
+					File:        file.Path,
+					Line:        lineNum,
+					Column:      getColumnFromPosition(file.Content, match[0]),
+					Severity:    r.Severity(),
+					Category:    r.Category(),
+					Message:     fmt.Sprintf("중복 코드 패턴이 발견되었습니다 (%d회 반복)", len(matches)),
+					Description: dp.description,
+					Suggestion:  dp.suggestion,
+					CodeSnippet: r.getCodeSnippet(file, lineNum),
+				})
+			}
+		}
+	}
+
+	// 동일한 라인 블록 검사 (5라인 이상)
+	r.checkDuplicateBlocks(file, &issues)
+
+	return issues
+}
+
+func (r *DuplicateCodeRule) checkDuplicateBlocks(file *parser.ParsedFile, issues *[]types.Issue) {
+	blockSize := 5 // 최소 5라인 블록
+	blocks := make(map[string][]int) // 정규화된 블록 -> 라인 번호들
+
+	for i := 0; i <= len(file.Lines)-blockSize; i++ {
+		block := r.normalizeBlock(file.Lines[i : i+blockSize])
+		if block != "" {
+			blocks[block] = append(blocks[block], i+1)
+		}
+	}
+
+	for _, lines := range blocks {
+		if len(lines) >= 2 { // 2번 이상 나타나면 중복
+			for _, lineNum := range lines {
+				*issues = append(*issues, types.Issue{
+					RuleID:      r.ID(),
+					File:        file.Path,
+					Line:        lineNum,
+					Column:      1,
+					Severity:    r.Severity(),
+					Category:    r.Category(),
+					Message:     fmt.Sprintf("중복된 코드 블록이 발견되었습니다 (%d개 위치에서 반복)", len(lines)),
+					Description: "동일한 코드 블록이 여러 곳에서 반복되고 있습니다",
+					Suggestion:  "공통 메소드로 추출하여 중복을 제거하세요",
+					CodeSnippet: r.getCodeSnippet(file, lineNum),
+				})
+			}
+		}
+	}
+}
+
+func (r *DuplicateCodeRule) normalizeBlock(lines []string) string {
+	var normalized []string
+	
+	for _, line := range lines {
+		// 공백 제거 및 정규화
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "*") {
+			continue // 빈 라인, 주석 제외
+		}
+		
+		// 변수명, 문자열 등을 플레이스홀더로 변경하여 구조적 유사성 검사
+		normalized = append(normalized, r.normalizeCodeLine(trimmed))
+	}
+	
+	if len(normalized) < 3 { // 실제 코드가 3라인 미만이면 제외
+		return ""
+	}
+	
+	return strings.Join(normalized, "\n")
+}
+
+func (r *DuplicateCodeRule) normalizeCodeLine(line string) string {
+	// 문자열 리터럴을 플레이스홀더로 변경
+	stringRegex := regexp.MustCompile(`"[^"]*"`)
+	line = stringRegex.ReplaceAllString(line, `"STRING"`)
+	
+	// 숫자를 플레이스홀더로 변경
+	numberRegex := regexp.MustCompile(`\b\d+\b`)
+	line = numberRegex.ReplaceAllString(line, "NUM")
+	
+	// 변수명을 단순화 (camelCase, snake_case 등)
+	variableRegex := regexp.MustCompile(`\b[a-zA-Z_][a-zA-Z0-9_]*\b`)
+	line = variableRegex.ReplaceAllString(line, "VAR")
+	
+	return line
+}
+
+func (r *DuplicateCodeRule) getCodeSnippet(file *parser.ParsedFile, line int) string {
+	if line <= 0 || line > len(file.Lines) {
+		return ""
+	}
+	return strings.TrimSpace(file.Lines[line-1])
+}
+
+// CodingConventionRule 코딩 컨벤션 검사
+type CodingConventionRule struct {
+	config config.RuleConfig
 }
 
 func NewCodingConventionRule(cfg config.RuleConfig) Rule {
-	return &SystemOutRule{config: cfg} // 임시로 SystemOutRule 재사용
+	return &CodingConventionRule{config: cfg}
+}
+
+func (r *CodingConventionRule) ID() string                 { return r.config.ID }
+func (r *CodingConventionRule) Name() string               { return r.config.Name }
+func (r *CodingConventionRule) Severity() config.Severity { return config.ParseSeverity(r.config.Severity) }
+func (r *CodingConventionRule) Category() string          { return r.config.Category }
+func (r *CodingConventionRule) Description() string       { return r.config.Description }
+
+func (r *CodingConventionRule) Check(file *parser.ParsedFile) []types.Issue {
+	var issues []types.Issue
+
+	javaClass, ok := file.AST.(*parser.JavaClass)
+	if !ok {
+		return issues
+	}
+
+	// @Resource vs @Autowired 혼용 검사
+	r.checkAnnotationConsistency(file, &issues)
+
+	// 네이밍 컨벤션 검사
+	r.checkNamingConvention(javaClass, file, &issues)
+
+	// 코드 스타일 검사
+	r.checkCodeStyle(file, &issues)
+
+	return issues
+}
+
+func (r *CodingConventionRule) checkAnnotationConsistency(file *parser.ParsedFile, issues *[]types.Issue) {
+	hasResource := strings.Contains(file.Content, "@Resource")
+	hasAutowired := strings.Contains(file.Content, "@Autowired")
+
+	if hasResource && hasAutowired {
+		// @Resource와 @Autowired가 모두 사용된 경우
+		resourceRegex := regexp.MustCompile(`@Resource`)
+		autowiredRegex := regexp.MustCompile(`@Autowired`)
+
+		resourceMatches := resourceRegex.FindAllStringIndex(file.Content, -1)
+		autowiredMatches := autowiredRegex.FindAllStringIndex(file.Content, -1)
+
+		// @Resource 사용 위치에 경고
+		for _, match := range resourceMatches {
+			lineNum := getLineNumberFromPosition(file.Content, match[0])
+			*issues = append(*issues, types.Issue{
+				RuleID:      r.ID(),
+				File:        file.Path,
+				Line:        lineNum,
+				Column:      getColumnFromPosition(file.Content, match[0]),
+				Severity:    r.Severity(),
+				Category:    r.Category(),
+				Message:     "@Resource와 @Autowired가 혼용되고 있습니다",
+				Description: "일관되지 않은 어노테이션 사용은 코드 품질을 저하시킵니다",
+				Suggestion:  "@Autowired로 통일하여 사용하세요 (Spring 권장사항)",
+				CodeSnippet: r.getCodeSnippet(file, lineNum),
+			})
+		}
+
+		// @Autowired 사용 위치에도 정보성 메시지
+		for _, match := range autowiredMatches {
+			lineNum := getLineNumberFromPosition(file.Content, match[0])
+			*issues = append(*issues, types.Issue{
+				RuleID:      r.ID(),
+				File:        file.Path,
+				Line:        lineNum,
+				Column:      getColumnFromPosition(file.Content, match[0]),
+				Severity:    config.SeverityLow, // 정보성 메시지
+				Category:    r.Category(),
+				Message:     "동일 클래스에서 @Resource와 @Autowired가 혼용되고 있습니다",
+				Description: "의존성 주입 어노테이션을 통일하는 것이 좋습니다",
+				Suggestion:  "프로젝트 전체에서 @Autowired로 통일하세요",
+				CodeSnippet: r.getCodeSnippet(file, lineNum),
+			})
+		}
+	}
+}
+
+func (r *CodingConventionRule) checkNamingConvention(javaClass *parser.JavaClass, file *parser.ParsedFile, issues *[]types.Issue) {
+	// 클래스명 PascalCase 검사
+	if !r.isPascalCase(javaClass.Name) {
+		*issues = append(*issues, types.Issue{
+			RuleID:      r.ID(),
+			File:        file.Path,
+			Line:        1,
+			Column:      1,
+			Severity:    r.Severity(),
+			Category:    r.Category(),
+			Message:     "클래스명이 PascalCase 규칙을 따르지 않습니다: " + javaClass.Name,
+			Description: "Java 네이밍 컨벤션에 따라 클래스명은 PascalCase를 사용해야 합니다",
+			Suggestion:  "클래스명을 PascalCase로 변경하세요",
+			CodeSnippet: "class " + javaClass.Name,
+		})
+	}
+
+	// 메소드명 camelCase 검사
+	for _, method := range javaClass.Methods {
+		if !r.isCamelCase(method.Name) && !r.isSpecialMethod(method.Name) {
+			*issues = append(*issues, types.Issue{
+				RuleID:      r.ID(),
+				File:        file.Path,
+				Line:        method.Line,
+				Column:      method.Column,
+				Severity:    r.Severity(),
+				Category:    r.Category(),
+				Message:     "메소드명이 camelCase 규칙을 따르지 않습니다: " + method.Name,
+				Description: "Java 네이밍 컨벤션에 따라 메소드명은 camelCase를 사용해야 합니다",
+				Suggestion:  "메소드명을 camelCase로 변경하세요",
+				CodeSnippet: r.getCodeSnippet(file, method.Line),
+			})
+		}
+	}
+
+	// 필드명 camelCase 검사
+	for _, field := range javaClass.Fields {
+		if !r.isCamelCase(field.Name) && !r.isConstant(field) {
+			*issues = append(*issues, types.Issue{
+				RuleID:      r.ID(),
+				File:        file.Path,
+				Line:        field.Line,
+				Column:      1,
+				Severity:    r.Severity(),
+				Category:    r.Category(),
+				Message:     "필드명이 camelCase 규칙을 따르지 않습니다: " + field.Name,
+				Description: "Java 네이밍 컨벤션에 따라 필드명은 camelCase를 사용해야 합니다",
+				Suggestion:  "필드명을 camelCase로 변경하세요",
+				CodeSnippet: r.getCodeSnippet(file, field.Line),
+			})
+		}
+	}
+}
+
+func (r *CodingConventionRule) checkCodeStyle(file *parser.ParsedFile, issues *[]types.Issue) {
+	// 탭과 스페이스 혼용 검사
+	hasTab := strings.Contains(file.Content, "\t")
+	hasSpaceIndent := regexp.MustCompile(`^\s{4,}`).MatchString(file.Content)
+
+	if hasTab && hasSpaceIndent {
+		*issues = append(*issues, types.Issue{
+			RuleID:      r.ID(),
+			File:        file.Path,
+			Line:        1,
+			Column:      1,
+			Severity:    r.Severity(),
+			Category:    r.Category(),
+			Message:     "탭과 스페이스가 혼용되고 있습니다",
+			Description: "일관된 들여쓰기를 사용해야 코드 가독성이 향상됩니다",
+			Suggestion:  "탭 또는 스페이스 중 하나로 통일하세요",
+			CodeSnippet: "",
+		})
+	}
+
+	// 긴 라인 검사 (120자 초과)
+	for i, line := range file.Lines {
+		if len(line) > 120 {
+			*issues = append(*issues, types.Issue{
+				RuleID:      r.ID(),
+				File:        file.Path,
+				Line:        i + 1,
+				Column:      121,
+				Severity:    config.SeverityLow,
+				Category:    r.Category(),
+				Message:     fmt.Sprintf("라인이 너무 깁니다 (%d자)", len(line)),
+				Description: "긴 라인은 가독성을 저하시킵니다",
+				Suggestion:  "라인을 120자 이하로 분할하세요",
+				CodeSnippet: r.getCodeSnippet(file, i+1),
+			})
+		}
+	}
+}
+
+func (r *CodingConventionRule) isPascalCase(name string) bool {
+	if len(name) == 0 {
+		return false
+	}
+	// 첫 글자가 대문자이고, 언더스코어나 다른 특수문자가 없어야 함
+	return name[0] >= 'A' && name[0] <= 'Z' && !strings.Contains(name, "_")
+}
+
+func (r *CodingConventionRule) isCamelCase(name string) bool {
+	if len(name) == 0 {
+		return false
+	}
+	// 첫 글자가 소문자이고, 언더스코어가 없어야 함
+	return name[0] >= 'a' && name[0] <= 'z' && !strings.Contains(name, "_")
+}
+
+func (r *CodingConventionRule) isSpecialMethod(name string) bool {
+	// 생성자, getter/setter, toString 등 특별한 메소드들
+	specialMethods := []string{"toString", "hashCode", "equals", "main"}
+	for _, special := range specialMethods {
+		if name == special {
+			return true
+		}
+	}
+	// getter/setter 패턴
+	return strings.HasPrefix(name, "get") || strings.HasPrefix(name, "set") || strings.HasPrefix(name, "is")
+}
+
+func (r *CodingConventionRule) isConstant(field parser.JavaField) bool {
+	// static final 필드는 상수로 간주
+	return field.IsStatic && field.IsFinal
+}
+
+func (r *CodingConventionRule) getCodeSnippet(file *parser.ParsedFile, line int) string {
+	if line <= 0 || line > len(file.Lines) {
+		return ""
+	}
+	return strings.TrimSpace(file.Lines[line-1])
 }
