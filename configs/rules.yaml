@@ -52,12 +52,14 @@ languages:
         name: "메소드 길이 초과"
         severity: "medium"
         category: "maintainability"
-        description: "50라인을 초과하는 긴 메소드"
+        description: "100라인을 초과하는 긴 메소드"
         enabled: true
         pattern:
           type: "method-analysis"
           conditions:
             - "method-length-exceeded"
+        custom:
+          max_lines: "100"
       
       - id: "java-exception-handling"
         name: "예외 처리 누락"
@@ -239,12 +241,14 @@ languages:
         name: "함수 길이 초과"
         severity: "medium"
         category: "maintainability"
-        description: "50라인을 초과하는 긴 함수"
+        description: "100라인을 초과하는 긴 함수"
         enabled: true
         pattern:
           type: "method-analysis"
           conditions:
             - "function-length-exceeded"
+        custom:
+          max_lines: "100"
       
       - id: "js-strict-mode"
         name: "Strict Mode 미사용"

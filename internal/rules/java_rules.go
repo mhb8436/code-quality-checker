@@ -47,21 +47,26 @@ func (r *TransactionalRule) Check(file *parser.ParsedFile) []types.Issue {
 		return issues
 	}
 
-	// 데이터 변경 메소드 검사
+	// 데이터 변경 메소드 검사 - 복잡한 트랜잭션이 필요한 경우만 체크
 	for _, method := range javaClass.Methods {
 		if r.isDataChangeMethod(method.Name) && !r.hasTransactionalAnnotation(method.Annotations) {
-			issues = append(issues, types.Issue{
-				RuleID:      r.ID(),
-				File:        file.Path,
-				Line:        method.Line,
-				Column:      method.Column,
-				Severity:    r.Severity(),
-				Category:    r.Category(),
-				Message:     "Service 클래스의 데이터 변경 메소드에 @Transactional 어노테이션이 누락되었습니다",
-				Description: "트랜잭션 미적용 시 데이터 일관성 및 원자성 보장이 어렵습니다",
-				Suggestion:  "@Transactional 어노테이션을 메소드에 추가하세요",
-				CodeSnippet: r.getCodeSnippet(file, method.Line),
-			})
+			// 메소드 복잡도 분석
+			complexity := r.analyzeMethodComplexity(file, method)
+			
+			if complexity.requiresTransaction {
+				issues = append(issues, types.Issue{
+					RuleID:      r.ID(),
+					File:        file.Path,
+					Line:        method.Line,
+					Column:      method.Column,
+					Severity:    r.Severity(),
+					Category:    r.Category(),
+					Message:     r.generateTransactionalMessage(method.Name, complexity),
+					Description: "복잡한 데이터 변경 작업에는 트랜잭션이 필요합니다",
+					Suggestion:  "@Transactional 어노테이션을 메소드에 추가하세요",
+					CodeSnippet: r.getCodeSnippet(file, method.Line),
+				})
+			}
 		}
 	}
 
@@ -89,6 +94,174 @@ func (r *TransactionalRule) hasTransactionalAnnotation(annotations []string) boo
 		}
 	}
 	return false
+}
+
+// MethodComplexity 메소드 복잡도 분석 결과
+type MethodComplexity struct {
+	requiresTransaction bool
+	reason             string
+	repositoryCalls    int
+	conditionalLogic   bool
+	multipleOperations bool
+	externalCalls      bool
+}
+
+// analyzeMethodComplexity 메소드의 트랜잭션 필요성 분석
+func (r *TransactionalRule) analyzeMethodComplexity(file *parser.ParsedFile, method parser.JavaMethod) MethodComplexity {
+	methodBody := r.extractMethodBody(file, method)
+	
+	complexity := MethodComplexity{
+		requiresTransaction: false,
+		reason:             "",
+	}
+	
+	// 1. Repository/DAO 호출 횟수 체크
+	repositoryPatterns := []string{
+		`\w+Repository\.\w+\(`,
+		`\w+DAO\.\w+\(`,
+		`\w+Mapper\.\w+\(`,
+	}
+	
+	for _, pattern := range repositoryPatterns {
+		regex := regexp.MustCompile(pattern)
+		matches := regex.FindAllString(methodBody, -1)
+		complexity.repositoryCalls += len(matches)
+	}
+	
+	// 2. 조건부 로직 검사 (if/else와 데이터 변경이 함께)
+	if r.hasConditionalDataOperations(methodBody) {
+		complexity.conditionalLogic = true
+	}
+	
+	// 3. 여러 종류의 데이터 작업 검사
+	if r.hasMultipleDataOperations(methodBody) {
+		complexity.multipleOperations = true
+	}
+	
+	// 4. 외부 시스템 호출 검사
+	if r.hasExternalSystemCalls(methodBody) {
+		complexity.externalCalls = true
+	}
+	
+	// 트랜잭션 필요성 판단
+	complexity.requiresTransaction, complexity.reason = r.determineTransactionNeed(complexity)
+	
+	return complexity
+}
+
+// extractMethodBody 메소드 본문 추출
+func (r *TransactionalRule) extractMethodBody(file *parser.ParsedFile, method parser.JavaMethod) string {
+	// 메소드 시작 위치 찾기
+	methodPattern := regexp.QuoteMeta(method.Name) + `\s*\([^)]*\)\s*\{`
+	methodRegex := regexp.MustCompile(methodPattern)
+	
+	match := methodRegex.FindStringIndex(file.Content)
+	if match == nil {
+		return ""
+	}
+	
+	// 메소드 본문 추출 (중괄호 매칭)
+	start := match[1] - 1 // '{' 위치
+	braceCount := 1
+	i := start + 1
+	
+	content := []rune(file.Content)
+	for i < len(content) && braceCount > 0 {
+		if content[i] == '{' {
+			braceCount++
+		} else if content[i] == '}' {
+			braceCount--
+		}
+		i++
+	}
+	
+	if braceCount == 0 {
+		return string(content[start:i])
+	}
+	
+	return ""
+}
+
+// hasConditionalDataOperations 조건부 데이터 작업 검사
+func (r *TransactionalRule) hasConditionalDataOperations(methodBody string) bool {
+	// if문과 데이터 변경 작업이 함께 있는지 검사
+	ifPattern := `if\s*\([^)]+\)\s*\{[^}]*(?:save|update|delete|insert|remove)\([^}]*\}`
+	matched, _ := regexp.MatchString(ifPattern, methodBody)
+	return matched
+}
+
+// hasMultipleDataOperations 여러 종류의 데이터 작업 검사
+func (r *TransactionalRule) hasMultipleDataOperations(methodBody string) bool {
+	operations := []string{"save", "update", "delete", "insert", "remove"}
+	foundOperations := make(map[string]bool)
+	
+	for _, op := range operations {
+		pattern := `\w*` + op + `\w*\(`
+		matched, _ := regexp.MatchString(`(?i)`+pattern, methodBody)
+		if matched {
+			foundOperations[op] = true
+		}
+	}
+	
+	// 2가지 이상의 다른 작업이 있으면 복잡한 트랜잭션
+	return len(foundOperations) >= 2
+}
+
+// hasExternalSystemCalls 외부 시스템 호출 검사
+func (r *TransactionalRule) hasExternalSystemCalls(methodBody string) bool {
+	externalPatterns := []string{
+		`restTemplate\.\w+\(`,
+		`webClient\.\w+\(`,
+		`\w*Client\.\w+\(`,
+		`\w*Service\.\w+\(.*http`,
+		`@FeignClient`,
+		`kafka\w*\.\w+\(`,
+		`jms\w*\.\w+\(`,
+	}
+	
+	for _, pattern := range externalPatterns {
+		matched, _ := regexp.MatchString(`(?i)`+pattern, methodBody)
+		if matched {
+			return true
+		}
+	}
+	
+	return false
+}
+
+// determineTransactionNeed 트랜잭션 필요성 최종 판단
+func (r *TransactionalRule) determineTransactionNeed(complexity MethodComplexity) (bool, string) {
+	reasons := []string{}
+	
+	// 2개 이상의 Repository 호출
+	if complexity.repositoryCalls >= 2 {
+		reasons = append(reasons, fmt.Sprintf("여러 테이블 작업(%d개 Repository 호출)", complexity.repositoryCalls))
+	}
+	
+	// 조건부 데이터 작업
+	if complexity.conditionalLogic {
+		reasons = append(reasons, "조건부 데이터 변경 로직")
+	}
+	
+	// 여러 종류의 데이터 작업
+	if complexity.multipleOperations {
+		reasons = append(reasons, "복합 데이터 작업(생성/수정/삭제)")
+	}
+	
+	// 외부 시스템 호출과 DB 작업이 함께
+	if complexity.externalCalls && complexity.repositoryCalls > 0 {
+		reasons = append(reasons, "외부 시스템 연동과 DB 작업")
+	}
+	
+	requiresTransaction := len(reasons) > 0
+	reason := strings.Join(reasons, ", ")
+	
+	return requiresTransaction, reason
+}
+
+// generateTransactionalMessage 트랜잭션 누락 메시지 생성
+func (r *TransactionalRule) generateTransactionalMessage(methodName string, complexity MethodComplexity) string {
+	return fmt.Sprintf("메소드 '%s'에 @Transactional이 필요합니다: %s", methodName, complexity.reason)
 }
 
 func (r *TransactionalRule) getCodeSnippet(file *parser.ParsedFile, line int) string {
@@ -315,10 +488,13 @@ func (r *MethodLengthRule) Check(file *parser.ParsedFile) []types.Issue {
 		return issues
 	}
 
+	// 설정에서 임계값 가져오기 (기본값: 100)
+	maxLines := r.getMaxLines()
+
 	for _, method := range javaClass.Methods {
 		methodLength := r.calculateMethodLength(file, method)
 		
-		if methodLength > 50 { // Java 메소드 길이 임계값
+		if methodLength > maxLines {
 			issues = append(issues, types.Issue{
 				RuleID:      r.ID(),
 				File:        file.Path,
@@ -326,7 +502,7 @@ func (r *MethodLengthRule) Check(file *parser.ParsedFile) []types.Issue {
 				Column:      method.Column,
 				Severity:    r.Severity(),
 				Category:    r.Category(),
-				Message:     "메소드가 너무 깁니다 (" + method.Name + ": " + intToString(methodLength) + " 라인)",
+				Message:     "메소드가 너무 깁니다 (" + method.Name + ": " + intToString(methodLength) + " 라인, 임계값: " + intToString(maxLines) + ")",
 				Description: "긴 메소드는 가독성과 유지보수성을 저하시킵니다",
 				Suggestion:  "메소드를 더 작은 단위로 분할하세요",
 				CodeSnippet: r.getCodeSnippet(file, method.Line),
@@ -348,6 +524,17 @@ func (r *MethodLengthRule) calculateMethodLength(file *parser.ParsedFile, method
 	}
 	
 	return strings.Count(match, "\n")
+}
+
+func (r *MethodLengthRule) getMaxLines() int {
+	// 설정에서 max_lines 값 가져오기
+	if maxLinesStr, exists := r.config.Custom["max_lines"]; exists {
+		if maxLines, err := strconv.Atoi(maxLinesStr); err == nil && maxLines > 0 {
+			return maxLines
+		}
+	}
+	// 기본값: 100라인 (업계 표준)
+	return 100
 }
 
 func (r *MethodLengthRule) getCodeSnippet(file *parser.ParsedFile, line int) string {
